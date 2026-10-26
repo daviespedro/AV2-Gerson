@@ -1,0 +1,184 @@
+// O modelo de dados do greencode: o mapa de tudo que o sistema sabe e, mais importante, do que ele se recusa a esquecer.
+// Organizacao 1-0..1 Contrato, Organizacao 1-N Lote, Lote 1-N Equipamento, Equipamento 1-N Movimentacao.
+// CHECKs, triggers e o resto do que o Prisma não expressa moram na migração "integridade". Eu desconfio até do meu próprio código.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Papel {
+  admin
+  cadastro
+  almoxarifado
+  auditor
+}
+
+enum StatusLote {
+  recebido
+  em_triagem
+  triagem_completa
+  encerrado
+}
+
+enum StatusEquipamento {
+  aguardando_triagem
+  em_triagem
+  triado
+  desmonte
+  reciclagem
+  descarte_seguro
+  revenda
+}
+
+enum EstadoFisico {
+  novo
+  seminovo
+  bom
+  regular
+  ruim
+  sucata
+}
+
+// Soft delete = ativo=false. Delete permanente falha (409) se o usuário já deixou rastros: quem tem histórico fica na história.
+model Usuario {
+  id           String   @id @default(uuid()) @db.Uuid
+  username     String   @unique
+  senhaHash    String
+  papel        Papel
+  ativo        Boolean  @default(true)
+  versao       Int      @default(1)
+  criadoEm     DateTime @default(now()) @db.Timestamptz(3)
+  atualizadoEm DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  lotes         Lote[]
+  movimentacoes Movimentacao[]
+  auditorias    Auditoria[]
+}
+
+// Quando a organização sai de cena, os lotes vão junto (mesmo carimbo `inativadoEm`);
+// os equipamentos somem com o lote. Sem contrato ela não fica inativa, mas também não recebe lotes.
+model Organizacao {
+  id           String    @id @default(uuid()) @db.Uuid
+  cnpj         String    @unique
+  razaoSocial  String
+  contato      String?
+  ativo        Boolean   @default(true)
+  inativadoEm  DateTime? @db.Timestamptz(3)
+  versao       Int       @default(1)
+  criadoEm     DateTime  @default(now()) @db.Timestamptz(3)
+  atualizadoEm DateTime  @default(now()) @updatedAt @db.Timestamptz(3)
+
+  contrato Contrato?
+  lotes    Lote[]
+}
+
+// Só delete permanente; "encerrar" apenas baixa a cortina (ativo=false). Um por organização (organizacaoId @unique).
+model Contrato {
+  id                   String   @id @default(uuid()) @db.Uuid
+  organizacaoId        String   @unique @db.Uuid
+  dataInicio           DateTime @db.Date
+  frequenciaColetaDias Int
+  condicoes            String?
+  clausulas            Json?
+  ativo                Boolean  @default(true)
+  versao               Int      @default(1)
+  criadoEm             DateTime @default(now()) @db.Timestamptz(3)
+  atualizadoEm         DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+
+  organizacao Organizacao @relation(fields: [organizacaoId], references: [id], onDelete: Cascade)
+}
+
+// O status é DERIVADO dos equipamentos: o lote nunca decide sozinho, ele só anuncia o veredito.
+// proximaPosicao: contador atômico da fila de posições (ninguém fura a fila).
+model Lote {
+  id             String     @id @default(uuid()) @db.Uuid
+  organizacaoId  String     @db.Uuid
+  nf             String
+  transportadora String
+  dataEntrada    DateTime   @db.Date
+  status         StatusLote @default(recebido)
+  proximaPosicao Int        @default(1)
+  criadoPorId    String     @db.Uuid
+  ativo          Boolean    @default(true)
+  inativadoEm    DateTime?  @db.Timestamptz(3)
+  versao         Int        @default(1)
+  criadoEm       DateTime   @default(now()) @db.Timestamptz(3)
+  atualizadoEm   DateTime   @default(now()) @updatedAt @db.Timestamptz(3)
+
+  organizacao  Organizacao   @relation(fields: [organizacaoId], references: [id], onDelete: Cascade)
+  criadoPor    Usuario       @relation(fields: [criadoPorId], references: [id], onDelete: Restrict)
+  equipamentos Equipamento[]
+
+  @@unique([organizacaoId, nf])
+  @@index([organizacaoId])
+  @@index([status])
+}
+
+// Só delete permanente. codigoBarrasInterno = id (o CHECK no banco garante) e é único: um número, dois nomes.
+model Equipamento {
+  id                  String            @id @db.Uuid
+  loteId              String            @db.Uuid
+  codigoBarrasInterno String            @unique
+  posicao             Int
+  tipo                String
+  estadoFisico        EstadoFisico      @default(novo)
+  status              StatusEquipamento @default(aguardando_triagem)
+  triagemCompleta     Boolean           @default(false)
+  versao              Int               @default(1)
+  criadoEm            DateTime          @default(now()) @db.Timestamptz(3)
+  atualizadoEm        DateTime          @default(now()) @updatedAt @db.Timestamptz(3)
+
+  lote          Lote           @relation(fields: [loteId], references: [id], onDelete: Cascade)
+  movimentacoes Movimentacao[]
+
+  @@unique([loteId, posicao])
+  @@index([loteId])
+  @@index([status])
+}
+
+// Histórico imutável: o trigger bloqueia UPDATE/DELETE diretos. O passado não se reescreve.
+model Movimentacao {
+  id            String             @id @default(uuid()) @db.Uuid
+  equipamentoId String             @db.Uuid
+  usuarioId     String             @db.Uuid
+  statusDe      StatusEquipamento?
+  statusPara    StatusEquipamento?
+  estadoDe      EstadoFisico?
+  estadoPara    EstadoFisico?
+  justificativa String?
+  versao        Int                @default(1) // imutável (trigger): a história não se reescreve, então a versão fica sempre 1
+  criadoEm      DateTime           @default(now()) @db.Timestamptz(3)
+
+  equipamento Equipamento @relation(fields: [equipamentoId], references: [id], onDelete: Cascade)
+  usuario     Usuario     @relation(fields: [usuarioId], references: [id], onDelete: Restrict)
+
+  @@index([equipamentoId, criadoEm])
+}
+
+// O caderninho de auditoria, gravado na MESMA transação da operação. Imutável, como confissão assinada.
+model Auditoria {
+  id        BigInt   @id @default(autoincrement())
+  usuarioId String?  @db.Uuid
+  acao      String
+  detalhes  Json?
+  versao    Int      @default(1) // imutável (trigger): a história não se reescreve, então a versão fica sempre 1
+  criadoEm  DateTime @default(now()) @db.Timestamptz(3)
+
+  usuario Usuario? @relation(fields: [usuarioId], references: [id], onDelete: SetNull)
+
+  @@index([criadoEm])
+  @@index([acao])
+}
+
+// Parâmetros globais (admin), como aliquota_icms: poucos, pequenos, valiosos.
+model ParametroGlobal {
+  chave        String   @id
+  valor        String
+  versao       Int      @default(1)
+  atualizadoEm DateTime @default(now()) @updatedAt @db.Timestamptz(3)
+}

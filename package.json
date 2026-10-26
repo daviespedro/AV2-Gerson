@@ -1,0 +1,51 @@
+{
+  "name": "greencode",
+  "version": "2.0.0",
+  "private": true,
+  "description": "greencode: API de logística reversa de resíduos eletrônicos (Fastify + Prisma + PostgreSQL)",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "postinstall": "prisma generate",
+    "dev": "tsx watch src/server.ts",
+    "build": "prisma generate && tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "pg": "tsx scripts/pg-local.ts",
+    "setup:env": "tsx scripts/preparar-env.ts",
+    "db:migrate": "prisma migrate deploy",
+    "db:seed": "tsx src/seed.ts",
+    "db:setup": "tsx scripts/preparar-env.ts && prisma migrate deploy && tsx src/seed.ts",
+    "docs:openapi": "tsx src/exportarOpenApi.ts",
+    "test": "tsx scripts/rodar-testes.ts",
+    "test:unit": "tsx --test tests/dominio.test.ts tests/config.test.ts",
+    "test:api": "tsx scripts/rodar-testes.ts tests/api.test.ts",
+    "test:seguranca": "tsx scripts/rodar-testes.ts tests/seguranca.test.ts",
+    "test:concorrencia": "tsx scripts/rodar-testes.ts tests/concorrencia.test.ts",
+    "test:requisitos": "tsx scripts/rodar-testes.ts tests/requisitos.test.ts",
+    "test:seed": "tsx scripts/rodar-testes.ts tests/seed.test.ts",
+    "test:encerramento": "tsx --test tests/encerramento.test.ts"
+  },
+  "prisma": {
+    "seed": "tsx src/seed.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.3.1",
+    "@fastify/jwt": "^10.2.5",
+    "@fastify/swagger": "^9.9.2",
+    "@fastify/swagger-ui": "^6.1.2",
+    "@prisma/client": "^6.0.0",
+    "bcryptjs": "^2.4.3",
+    "fastify": "^5.12.7"
+  },
+  "optionalDependencies": {
+    "embedded-postgres": "latest"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^22.0.0",
+    "prisma": "^6.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
